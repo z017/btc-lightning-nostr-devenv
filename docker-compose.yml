@@ -1,0 +1,130 @@
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 10s
+  retries: 10
+  start_period: 1m
+x-depends-on-bitcoin: &depends_on_bitcoin
+  bitcoin:
+    condition: service_healthy
+    restart: true
+
+services:
+  bitcoin:
+    build:
+      context: ./docker/bitcoin
+    container_name: bitcoin
+    restart: unless-stopped
+    command: "bitcoind -debug=${BITCOIND_DEBUG:-0}"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "bitcoin-cli -regtest -rpcport=18443 -rpcuser=bitcoin -rpcpassword=bitcoin getblockchaininfo"]
+    expose:
+      - 18443 # RPC
+      - 18444 # P2P
+      - 29000 # ZMQ TX
+      - 29001 # ZMQ BLOCK
+      - 29002 # ZMQ HASH BLOCK
+    ports:
+      - 18443:18443
+      - 29000:29000
+      - 29001:29001
+      - 29002:29002
+    volumes:
+      - bitcoin:/home/bitcoin/.bitcoin
+  
+  dev_lnd:
+    build:
+      context: ./docker/lnd
+    container_name: dev_lnd
+    restart: unless-stopped
+    command: 'lnd --alias=dev_lnd --externalip=dev_lnd --tlsextradomain=dev_lnd --tlsextradomain=host.docker.internal'
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "lncli --network=regtest --lnddir=/home/lnd/.lnd getinfo"]
+    depends_on: *depends_on_bitcoin
+    expose:
+      - 9735  # P2P
+      - 10009 # RPC
+      - 8080  # REST
+    ports:
+      - 10009:10009
+      - 8080:8080
+    volumes:
+      - dev_lnd:/home/lnd/.lnd
+
+  alice_lnd:
+    build:
+      context: ./docker/lnd
+    container_name: alice_lnd
+    restart: unless-stopped
+    command: 'lnd --alias=alice_lnd --externalip=alice_lnd --tlsextradomain=alice_lnd --tlsextradomain=host.docker.internal'
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "lncli --network=regtest --lnddir=/home/lnd/.lnd getinfo"]
+    depends_on: *depends_on_bitcoin
+    expose:
+      - 9735  # P2P
+      - 10009 # RPC
+      - 8080  # REST
+    volumes:
+      - alice_lnd:/home/lnd/.lnd
+
+  bob_lnd:
+    build:
+      context: ./docker/lnd
+    container_name: bob_lnd
+    restart: unless-stopped
+    command: 'lnd --alias=bob_lnd --externalip=bob_lnd --tlsextradomain=bob_lnd --tlsextradomain=host.docker.internal'
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "lncli --network=regtest --lnddir=/home/lnd/.lnd getinfo"]
+    depends_on: *depends_on_bitcoin
+    expose:
+      - 9735  # P2P
+      - 10009 # RPC
+      - 8080  # REST
+    volumes:
+      - bob_lnd:/home/lnd/.lnd
+
+  thunderhub:
+    build:
+      context: ./docker/thunderhub
+    container_name: thunderhub
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "netstat -an | grep :3000"]
+    environment:
+      SSO_SERVER_URL: dev_lnd:10009
+    expose:
+      - 3000  # HTTP
+    ports:
+      - 3000:3000
+    depends_on:
+      dev_lnd:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - dev_lnd:/lnd
+
+  nostr_relay:
+    build:
+      context: ./docker/nostr_relay
+    container_name: nostr_relay
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD-SHELL", "nak relay nostr_relay:8081"]
+    expose:
+      - 8081  # WS
+    ports:
+      - 8081:8081
+    volumes:
+      - nostr_relay:/home/dev/.nostr_relay
+  
+volumes:
+  bitcoin:
+  dev_lnd:
+  alice_lnd:
+  bob_lnd:
+  nostr_relay:

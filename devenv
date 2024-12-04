@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+#
+# Bitcoin, Lightning & Nostr dev environment.
+#
+# https://github.com/z017/btc-lightning-nostr-devenv
+
+readonly PROJECT_ROOT="$(cd "$(dirname $(realpath "${BASH_SOURCE[0]}"))" && pwd)"
+readonly SCRIPTS_DIR="$PROJECT_ROOT/scripts"
+
+# Import common script configurations and utilities
+source "$SCRIPTS_DIR/_common.sh" || exit 1
+source "$SCRIPTS_DIR/docker.sh" || exit 1
+source "$SCRIPTS_DIR/bitcoin.sh" || exit 1
+source "$SCRIPTS_DIR/lightning.sh" || exit 1
+source "$SCRIPTS_DIR/nostr.sh" || exit 1
+
+readonly SCRIPT_NAME=${0##*/}
+readonly SCRIPT_VERSION=0.0.1
+readonly SCRIPT_DESCRIPTION="Bitcoin, Lightning & Nostr dev environment"
+
+readonly COMMANDS=( \
+  help version start stop sh private_key public_key bitcoin_cli dev_lncli \
+  alice_lncli bob_lncli nak clean \
+)
+readonly LONG_OPTS=(help version log-level:)
+readonly SHORT_OPTS=hv 
+
+# -----------------------------------------------------------------------------
+# Initialization
+# -----------------------------------------------------------------------------
+function on_init() {
+  load_environment_if_exists "$PROJECT_ROOT/.env"
+  required docker jq
+  if ! command -v docker version &> /dev/null; then
+    fatal "dockerd must be running"
+  fi
+}
+
+function on_option() {
+  case "$1" in
+    h|help)             execute_help ;;
+    v|version)          execute_version ;;
+    log-level)          log_level "$OPTARG" ;;
+    *)                  fatal "Internal script error, unmatched option '$1'" ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
+# Commands
+# -----------------------------------------------------------------------------
+function execute_command() {
+  local cmd="$1"
+  shift
+  case "$cmd" in
+    help)           execute_help ;;
+    version)        execute_version ;;
+    start)          execute_start "$@" ;;
+    stop)           execute_stop "$@" ;;
+    sh)             execute_sh "$@" ;;
+    private_key)    execute_private_key "$@" ;;
+    public_key)     execute_public_key "$@" ;;
+    bitcoin_cli)    execute_bitcoin_cli "$@" ;;
+    dev_lncli)      execute_lncli dev_lnd "$@" ;;
+    alice_lncli)    execute_lncli alice_lnd "$@" ;;
+    bob_lncli)      execute_lncli bob_lnd "$@" ;;
+    nak)            execute_nak "$@" ;;
+    clean)          execute_clean "$@" ;;
+    *)              execute_help ;;
+  esac
+}
+
+function execute_start() {
+  info start dev environment
+  docker_compose up -d --remove-orphans --build $@
+
+  bitcoin_init
+  lightning_init
+}
+
+function execute_stop() {
+  info stop dev environment
+  docker_compose stop
+}
+
+function execute_sh() {
+  local service_name=$1
+  info sh into $service_name
+  docker_compose exec $service_name bash 2>/dev/null || docker_compose exec $service_name sh
+}
+
+function execute_private_key() {
+  private_key_from_mnemonic_path "$@"
+}
+
+function execute_public_key() {
+  public_key_from_private_key "$@"
+}
+
+function execute_bitcoin_cli() {
+  bitcoin_cli "$@"
+}
+
+function execute_lncli() {
+  lncli "$@"
+}
+
+function execute_nak() {
+  nak "$@"
+}
+
+function execute_clean() {
+  info clean up dev environment
+  docker_compose down -v
+  docker_compose rm -fsv
+}
+
+function version_message() {
+  printf "%s version %s\n" ${SCRIPT_NAME-0##*/} ${SCRIPT_VERSION-unknown}
+}
+
+function help_message() {
+  cat <<END
+
+  $SCRIPT_DESCRIPTION
+
+Usage:
+  $SCRIPT_NAME [options] [command] [args]
+
+Available Commands:
+  start                             Start dev environment.
+  stop                              Stop dev environment.
+  sh <service_name>                 Open a shell inside a running container.
+  private_key <mnemonic> <path>     Generate private key from mnemonic and
+                                    derivation path.     
+  public_key <private_key>          Generate public key from private key.
+  bitcoin_cli [args]                Bitcoind client.
+  dev_lncli [args]                  Dev lnd client.
+  alice_lncli [args]                Alice lnd client.
+  bob_lncli [args]                  Bob lnd client.
+  nak [args]                        Nostr relay client.
+  clean                             Clean dev environment.
+  help                              Display detailed help.
+  version                           Print version information.
+
+Options:
+  --help, -h              Alias help command.
+  --version, -v           Alias version command.
+  --log-level <level>     Set the log level severity. Lower level will be
+                          ignored. Must be an integer or a level name:
+                          ${SEVERITY_RANGES_NAMES[@]}.
+  --                      Denotes the end of the options.  Arguments after this
+                          will be handled as parameters even if they start with
+                          a '-'.
+END
+}
+
+# -----------------------------------------------------------------------------
+# Run the script
+# -----------------------------------------------------------------------------
+parse_and_execute "$@"
